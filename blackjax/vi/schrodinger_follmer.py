@@ -105,7 +105,7 @@ def step(
     log_pdf -= jnp.max(log_pdf, axis=0, keepdims=True)
     pdf = jnp.exp(log_pdf)
 
-    num = jax.tree.map(lambda a: pdf @ a, eps_drift)
+    num = jax.tree.map(lambda a: jnp.tensordot(pdf, a, axes=1), eps_drift)
     den = scale * jnp.sum(pdf, axis=0)
 
     drift = jax.tree.map(lambda a: a / den, num)
