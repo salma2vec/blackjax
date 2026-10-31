@@ -1,4 +1,4 @@
-name: Verify Schrodinger-Follmer sample-axis regression
+name: Verify corrected Schrodinger-Follmer estimator
 
 on:
   push:
@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 jobs:
-  reproduce:
+  verify:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -20,7 +20,7 @@ jobs:
         run: uv sync --group dev --extra progress
       - name: Reproduce through public API
         run: |
-          uv run --frozen python - <<'PY' | tee public-before.txt
+          uv run --frozen python - <<'PY' | tee public-after.txt
           import importlib.metadata
           import blackjax
           import jax
@@ -36,19 +36,16 @@ jobs:
           print('equivalent flat drift:', vector_info.drift.reshape(4, 3))
           print('max absolute difference:', jnp.max(jnp.abs(matrix_info.drift - vector_info.drift.reshape(4, 3))))
           PY
-      - name: Run new regressions against unchanged production
+      - name: Run complete native Schrodinger-Follmer tests
         run: |
-          set +e
-          uv run --frozen pytest tests/vi/test_schrodinger_follmer.py -k 'sample_axis or flat_coordinates' --benchmark-disable -q --junitxml=before.xml >before.txt 2>&1
-          status=$?
-          set -e
-          cat before.txt
-          test "$status" -eq 1
+          uv run --frozen pytest tests/vi/test_schrodinger_follmer.py --benchmark-disable -q --junitxml=after.xml | tee after.txt
+          sha256sum blackjax/vi/schrodinger_follmer.py tests/vi/test_schrodinger_follmer.py > source-sha256.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: schrodinger-before
+          name: schrodinger-after
           path: |
-            public-before.txt
-            before.xml
-            before.txt
+            public-after.txt
+            after.xml
+            after.txt
+            source-sha256.txt

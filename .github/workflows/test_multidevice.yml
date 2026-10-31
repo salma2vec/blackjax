@@ -2,9 +2,9 @@ name: Multi-device tests
 
 on:
   pull_request:
-    branches: [main]
+    branches: [codex/verify-schrodinger-20261031]
   push:
-    branches: [main]
+    branches: [codex/verify-schrodinger-20261031]
 
 jobs:
   style:
@@ -46,4 +46,9 @@ jobs:
       - name: Set up test environment
         run: uv sync --group dev --extra progress
       - name: Run multi-device tests
-        run: uv run pytest tests/test_multidevice/ -v
+        run: uv run pytest tests/test_multidevice/ -v --junitxml=multidevice.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: multidevice-tests
+          path: multidevice.xml

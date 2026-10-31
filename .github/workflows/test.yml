@@ -2,9 +2,9 @@ name: Tests
 
 on:
   pull_request:
-    branches: [main]
+    branches: [codex/verify-schrodinger-20261031]
   push:
-    branches: [main]
+    branches: [codex/verify-schrodinger-20261031]
 
 jobs:
   style:
@@ -41,6 +41,7 @@ jobs:
       contents: read
       id-token: write  # lets codecov-action request an OIDC token for the upload
     strategy:
+      fail-fast: false
       matrix:
         python-version: ['3.13', '3.14']
     steps:
@@ -53,7 +54,12 @@ jobs:
       run: uv sync --group dev --extra progress
     - name: Run tests
       run: |
-        uv run pytest -n 2 -vv --benchmark-disable --cov=blackjax --cov-report=xml --cov-report=term tests
+        uv run pytest -n 2 -vv --benchmark-disable --cov=blackjax --cov-report=xml --cov-report=term --junitxml=native-tests.xml tests
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: native-tests-${{ matrix.python-version }}
+        path: native-tests.xml
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v7
       with:
