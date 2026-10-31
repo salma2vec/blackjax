@@ -2,7 +2,7 @@ name: Verify corrected Schrodinger-Follmer estimator
 
 on:
   push:
-    branches: [codex/verify-schrodinger-20261031]
+    branches: [codex/verify-schrodinger-final-gates]
 
 permissions:
   contents: read
@@ -26,7 +26,7 @@ jobs:
         run: uv sync --group dev --extra progress
       - name: Reproduce through public API
         run: |
-          uv run --frozen python - <<'PY' | tee public-after.txt
+          uv run --frozen python - <<'PY' >public-after.txt
           import importlib.metadata
           import blackjax
           import jax
@@ -42,6 +42,7 @@ jobs:
           print('equivalent flat drift:', vector_info.drift.reshape(4, 3))
           print('max absolute difference:', jnp.max(jnp.abs(matrix_info.drift - vector_info.drift.reshape(4, 3))))
           PY
+          cat public-after.txt
       - name: Check final regressions on unchanged production
         run: |
           cp blackjax/vi/schrodinger_follmer.py /tmp/schrodinger-candidate.py
@@ -53,11 +54,26 @@ jobs:
           cp /tmp/schrodinger-candidate.py blackjax/vi/schrodinger_follmer.py
           cat before.txt
           test "$status" -eq 1
+          uv run --frozen python - <<'PY'
+          import xml.etree.ElementTree as ET
+          root = ET.parse('before.xml').getroot()
+          suites = list(root.iter('testsuite'))
+          counts = {key: sum(int(s.get(key, 0)) for s in suites) for key in ['tests', 'failures', 'errors', 'skipped']}
+          assert counts == {'tests': 30, 'failures': 16, 'errors': 0, 'skipped': 6}, counts
+          failures = [c for c in root.iter('testcase') if c.find('failure') is not None]
+          expected = ['pytree_samples_match_flat_coordinates', 'sample_axis_matrix__', 'sample_axis_matrix_matching_sample_count', 'sample_axis_tensor']
+          assert all(any(name in c.get('name') for name in expected) for c in failures)
+          print('Confirmed expected baseline regression counts:', counts)
+          PY
       - name: Run complete native Schrodinger-Follmer tests
         run: |
-          set -o pipefail
-          uv run --frozen pytest tests/vi/test_schrodinger_follmer.py --benchmark-disable -q --junitxml=after.xml | tee after.txt
+          uv run --frozen pytest tests/vi/test_schrodinger_follmer.py --benchmark-disable -q --junitxml=after.xml >after.txt 2>&1
+          cat after.txt
           sha256sum blackjax/vi/schrodinger_follmer.py tests/vi/test_schrodinger_follmer.py > source-sha256.txt
+      - name: Exercise all new pmap cases on four CPU devices
+        env:
+          XLA_FLAGS: --xla_force_host_platform_device_count=4
+        run: uv run --frozen pytest tests/vi/test_schrodinger_follmer.py -k with_pmap --benchmark-disable -q --junitxml=pmap.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -69,3 +85,4 @@ jobs:
             source-sha256.txt
             before.xml
             before.txt
+            pmap.xml
