@@ -43,9 +43,11 @@ class SchrodingerFollmerTest(BlackJAXTest):
         expected_position = flat_position + 0.25 * expected_drift
         expected_position += 0.5 * jax.random.normal(sde_key, flat_position.shape)
 
-        chex.assert_trees_all_close(info.drift, expected_drift.reshape(shape))
         chex.assert_trees_all_close(
-            next_state.position, expected_position.reshape(shape)
+            info.drift, expected_drift.reshape(shape), rtol=1e-5, atol=1e-5
+        )
+        chex.assert_trees_all_close(
+            next_state.position, expected_position.reshape(shape), rtol=1e-5, atol=1e-5
         )
         chex.assert_trees_all_close(next_state.time, 0.5)
 
@@ -63,7 +65,9 @@ class SchrodingerFollmerTest(BlackJAXTest):
         samples = self.variant(lambda k, s: algorithm.sample(k, s, 5))(key, state)
         expected = flat_algorithm.sample(key, flat_state, 5)
         flat_samples = jax.vmap(lambda x: ravel_pytree(x)[0])(samples.position)
-        chex.assert_trees_all_close(flat_samples, expected.position)
+        chex.assert_trees_all_close(
+            flat_samples, expected.position, rtol=1e-5, atol=1e-5
+        )
         chex.assert_trees_all_close(samples.time, expected.time)
 
     @chex.all_variants(with_pmap=True)

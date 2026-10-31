@@ -7,12 +7,18 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: '3.13'
@@ -36,8 +42,20 @@ jobs:
           print('equivalent flat drift:', vector_info.drift.reshape(4, 3))
           print('max absolute difference:', jnp.max(jnp.abs(matrix_info.drift - vector_info.drift.reshape(4, 3))))
           PY
+      - name: Check final regressions on unchanged production
+        run: |
+          cp blackjax/vi/schrodinger_follmer.py /tmp/schrodinger-candidate.py
+          git show 2d6a51c3b0f7b4a221ac7ba218be09b97f1df608:blackjax/vi/schrodinger_follmer.py > blackjax/vi/schrodinger_follmer.py
+          set +e
+          uv run --frozen pytest tests/vi/test_schrodinger_follmer.py -k 'sample_axis or flat_coordinates' --benchmark-disable -q --junitxml=before.xml >before.txt 2>&1
+          status=$?
+          set -e
+          cp /tmp/schrodinger-candidate.py blackjax/vi/schrodinger_follmer.py
+          cat before.txt
+          test "$status" -eq 1
       - name: Run complete native Schrodinger-Follmer tests
         run: |
+          set -o pipefail
           uv run --frozen pytest tests/vi/test_schrodinger_follmer.py --benchmark-disable -q --junitxml=after.xml | tee after.txt
           sha256sum blackjax/vi/schrodinger_follmer.py tests/vi/test_schrodinger_follmer.py > source-sha256.txt
       - uses: actions/upload-artifact@v4
@@ -49,3 +67,5 @@ jobs:
             after.xml
             after.txt
             source-sha256.txt
+            before.xml
+            before.txt
