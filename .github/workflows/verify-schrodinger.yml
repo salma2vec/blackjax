@@ -1,0 +1,54 @@
+name: Verify Schrodinger-Follmer sample-axis regression
+
+on:
+  push:
+    branches: [codex/verify-schrodinger-20261031]
+
+permissions:
+  contents: read
+
+jobs:
+  reproduce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.13'
+      - name: Install native test environment
+        run: uv sync --group dev --extra progress
+      - name: Reproduce through public API
+        run: |
+          uv run --frozen python - <<'PY' | tee public-before.txt
+          import importlib.metadata
+          import blackjax
+          import jax
+          import jax.numpy as jnp
+          for name in ['blackjax', 'jax', 'jaxlib', 'numpy', 'chex', 'optax']:
+              print(name, importlib.metadata.version(name))
+          logdensity = lambda x: -0.5 * jnp.sum((x - 0.4)**2)
+          algorithm = blackjax.schrodinger_follmer(logdensity, 4, 4)
+          key = jax.random.key(0)
+          _, matrix_info = algorithm.step(key, algorithm.init(jnp.zeros((4, 3))))
+          _, vector_info = algorithm.step(key, algorithm.init(jnp.zeros(12)))
+          print('matrix drift:', matrix_info.drift)
+          print('equivalent flat drift:', vector_info.drift.reshape(4, 3))
+          print('max absolute difference:', jnp.max(jnp.abs(matrix_info.drift - vector_info.drift.reshape(4, 3))))
+          PY
+      - name: Run new regressions against unchanged production
+        run: |
+          set +e
+          uv run --frozen pytest tests/vi/test_schrodinger_follmer.py -k 'sample_axis or flat_coordinates' --benchmark-disable -q --junitxml=before.xml >before.txt 2>&1
+          status=$?
+          set -e
+          cat before.txt
+          test "$status" -eq 1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: schrodinger-before
+          path: |
+            public-before.txt
+            before.xml
+            before.txt
