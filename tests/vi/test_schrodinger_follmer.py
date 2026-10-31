@@ -1,16 +1,71 @@
 import functools
+import math
 
 import chex
 import jax
 import jax.numpy as jnp
 import jax.scipy.stats as stats
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
+from jax.flatten_util import ravel_pytree
 
+import blackjax
 from blackjax.vi.schrodinger_follmer import as_top_level_api as schrodinger_follmer
 from tests.fixtures import BlackJAXTest
 
 
 class SchrodingerFollmerTest(BlackJAXTest):
+    @chex.all_variants(with_pmap=True)
+    @parameterized.named_parameters(
+        ("scalar", ()),
+        ("vector", (6,)),
+        ("matrix", (2, 3)),
+        ("matrix_matching_sample_count", (4, 3)),
+        ("tensor", (2, 4, 3)),
+    )
+    def test_step_estimator_reduces_sample_axis(self, shape):
+        position = jnp.linspace(-0.2, 0.3, math.prod(shape)).reshape(shape)
+        logdensity = lambda x: -0.5 * jnp.sum(((x - 0.4) / 1.3) ** 2)
+        algorithm = blackjax.schrodinger_follmer(logdensity, 4, 4)
+        state = algorithm.init(position)._replace(position=position, time=0.25)
+        key = self.next_key()
+        next_state, info = self.variant(algorithm.step)(key, state)
+
+        # Evaluate the weighted Monte Carlo estimator in flat coordinates.
+        drift_key, sde_key = jax.random.split(key)
+        flat_position = position.reshape(-1)
+        noise = jax.random.normal(drift_key, (4, flat_position.size))
+        scale = jnp.sqrt(1 - state.time)
+        perturbed = flat_position + scale * noise
+        log_weights = -0.5 * jnp.sum(((perturbed - 0.4) / 1.3) ** 2, axis=1)
+        log_weights += 0.5 * jnp.sum(perturbed**2, axis=1)
+        weights = jax.nn.softmax(log_weights)
+        expected_drift = jnp.sum(weights[:, None] * noise, axis=0) / scale
+        expected_position = flat_position + 0.25 * expected_drift
+        expected_position += 0.5 * jax.random.normal(sde_key, flat_position.shape)
+
+        chex.assert_trees_all_close(info.drift, expected_drift.reshape(shape))
+        chex.assert_trees_all_close(
+            next_state.position, expected_position.reshape(shape)
+        )
+        chex.assert_trees_all_close(next_state.time, 0.5)
+
+    @chex.all_variants(with_pmap=True)
+    def test_pytree_samples_match_flat_coordinates(self):
+        position = {"bias": jnp.zeros(2), "weights": jnp.zeros((4, 3))}
+        flat_position, _ = ravel_pytree(position)
+        flat_logdensity = lambda x: -0.5 * jnp.sum((x - 0.4) ** 2)
+        logdensity = lambda x: flat_logdensity(ravel_pytree(x)[0])
+        algorithm = blackjax.schrodinger_follmer(logdensity, 3, 4)
+        flat_algorithm = blackjax.schrodinger_follmer(flat_logdensity, 3, 4)
+        state = algorithm.init(position)
+        flat_state = flat_algorithm.init(flat_position)
+        key = self.next_key()
+        samples = self.variant(lambda k, s: algorithm.sample(k, s, 5))(key, state)
+        expected = flat_algorithm.sample(key, flat_state, 5)
+        flat_samples = jax.vmap(lambda x: ravel_pytree(x)[0])(samples.position)
+        chex.assert_trees_all_close(flat_samples, expected.position)
+        chex.assert_trees_all_close(samples.time, expected.time)
+
     @chex.all_variants(with_pmap=True)
     def test_recover_posterior(self):
         """Simple Normal mean test"""
